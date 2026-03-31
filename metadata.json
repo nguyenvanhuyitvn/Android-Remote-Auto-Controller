@@ -1,0 +1,5 @@
+{
+  "name": "Android Remote Auto-Controller",
+  "description": "A dashboard for remote controlling multiple Android devices, automated calling, and audio interaction management.",
+  "requestFramePermissions": []
+}
