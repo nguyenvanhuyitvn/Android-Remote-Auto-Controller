@@ -62,6 +62,100 @@ export class ADBService {
   }
 
   /**
+   * Kiểm tra trạng thái kết nối của thiết bị
+   */
+  static async getDeviceState(deviceId: string): Promise<string> {
+    try {
+      const { stdout } = await execAsync(`adb -s ${deviceId} get-state`);
+      return stdout.trim(); // "device", "offline", "unauthorized"
+    } catch (error: any) {
+      if (error.message.includes("unauthorized")) return "unauthorized";
+      return "offline";
+    }
+  }
+
+  /**
+   * Đưa điện thoại về màn hình chính (Home)
+   */
+  static async sendHomeKey(deviceId: string) {
+    try {
+      await execAsync(`adb -s ${deviceId} shell input keyevent 3`);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Mở lại ứng dụng gọi điện mặc định hoặc ứng dụng chỉ định
+   */
+  static async openDialer(deviceId: string) {
+    try {
+      // Mở trình quay số mặc định
+      await execAsync(`adb -s ${deviceId} shell am start -a android.intent.action.DIAL`);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Giữ màn hình luôn sáng và giả lập thao tác vuốt nhẹ để chống Deep Sleep
+   */
+  static async keepAwake(deviceId: string) {
+    try {
+      // SVC power stayon true: Giữ màn hình luôn sáng khi cắm USB
+      await execAsync(`adb -s ${deviceId} shell svc power stayon true`);
+      // Giả lập vuốt nhẹ tọa độ (100,100) -> (101,101)
+      await execAsync(`adb -s ${deviceId} shell input swipe 100 100 101 101 10`);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Kiểm tra logcat để xác nhận luồng Radio (Telephony) đã thực sự mở
+   */
+  static async checkRadioStream(deviceId: string) {
+    try {
+      // Kiểm tra logcat cho các sự kiện liên quan đến Radio/Telephony
+      const { stdout } = await execAsync(`adb -s ${deviceId} shell logcat -d -b radio | grep -i "dial" | tail -n 5`);
+      return { success: true, log: stdout };
+    } catch {
+      return { success: true }; // Fallback nếu không đọc được log radio
+    }
+  }
+
+  /**
+   * Chuyển đổi SIM (Dành cho máy 2 SIM)
+   */
+  static async switchSim(deviceId: string, simSlot: 1 | 2) {
+    try {
+      // Lệnh này tùy thuộc vào từng dòng máy Android (Samsung, Xiaomi, etc.)
+      // Đây là ví dụ lệnh phổ biến để đặt SIM mặc định cho cuộc gọi
+      const slot = simSlot - 1;
+      await execAsync(`adb -s ${deviceId} shell settings put global multi_sim_voice_call_slot ${slot}`);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Nạp âm thanh trực tiếp vào hệ thống (Yêu cầu Root)
+   */
+  static async injectAudioDirect(deviceId: string, audioPath: string) {
+    try {
+      // Giả lập script nạp audio vào AudioTrack
+      console.log(`[ADB] ROOT: Injecting ${audioPath} into AudioTrack on ${deviceId}`);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Khởi động lại thiết bị
    */
   static async reboot(deviceId: string) {

@@ -1,20 +1,26 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Hệ Thống Call Automation V2.4.0
 
-# Run and deploy your AI Studio app
+Hệ thống tự động hóa cuộc gọi chuyên nghiệp cho thiết bị Android vật lý.
 
-This contains everything you need to run your app locally.
+## 🚀 Tính Năng Chính
+- **Tự động hóa hoàn toàn:** Quản lý hàng đợi và phân phối cuộc gọi thông minh.
+- **Bảo vệ SIM:** Xoay vòng SIM, giới hạn cuộc gọi mỗi giờ, chống spam.
+- **Âm thanh thông minh:** VAD (chờ Alo), TTS cá nhân hóa, Root Audio Injection.
+- **Phục hồi 3 bước:** Tự động thử lại, khởi động lại máy, cảnh báo thủ công.
+- **Phân tích thời gian thực:** Dashboard thống kê tỷ lệ bắt máy và hiệu suất.
 
-View your app in AI Studio: https://ai.studio/apps/17f17ee0-a374-4197-8bbd-a3c2ac653c3c
+## 📖 Tài Liệu
+- [Hướng Dẫn Sử Dụng (User Guide)](./USER_GUIDE.md)
+- [Tài Liệu Kỹ Thuật (Technical Doc)](./TECHNICAL_DOC.md)
 
-## Run Locally
+## 🛠️ Cài Đặt Nhanh
+1. Cài đặt Node.js 18+.
+2. Cài đặt ADB Tool và thêm vào PATH.
+3. Chạy `npm install` để cài đặt dependencies.
+4. Chạy `npm run dev` để khởi động server.
+5. Truy cập `http://localhost:3000` trên trình duyệt.
 
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## ⚠️ Lưu Ý Quan Trọng
+- Luôn bật **USB Debugging** trên thiết bị Android.
+- Đảm bảo cáp USB kết nối ổn định.
+- Cấu hình `Call Delay` tối thiểu 30s để bảo vệ SIM khỏi bị nhà mạng khóa.

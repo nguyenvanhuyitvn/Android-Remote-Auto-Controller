@@ -1,19 +1,19 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-
 export class GeminiService {
-  private static checkApiKey() {
-    if (!process.env.GEMINI_API_KEY) {
+  private static getAI() {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
       throw new Error("GEMINI_API_KEY is missing. Please set it in the environment.");
     }
+    return new GoogleGenAI({ apiKey });
   }
 
   /**
    * 1. Phân tích ý định cuộc gọi (Intent Recognition)
    */
   static async analyzeIntent(transcript: string) {
-    this.checkApiKey();
+    const ai = this.getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Phân tích đoạn hội thoại sau và trả về JSON:
@@ -40,7 +40,7 @@ export class GeminiService {
    * 2. Đọc hiểu màn hình (AI Vision / OCR)
    */
   static async analyzeScreen(base64Image: string, task: string) {
-    this.checkApiKey();
+    const ai = this.getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [
@@ -72,7 +72,7 @@ export class GeminiService {
    * 3. Tóm tắt báo cáo từ Logs (Data Processing)
    */
   static async generateReport(logs: any[]) {
-    this.checkApiKey();
+    const ai = this.getAI();
     if (!logs || logs.length === 0) {
       return "Không có dữ liệu nhật ký (logs) để tạo báo cáo. Vui lòng thực hiện một số thao tác trước.";
     }
@@ -90,7 +90,7 @@ export class GeminiService {
    * 4. Vượt rào cản bảo mật (CAPTCHA / Security)
    */
   static async solveSecurityChallenge(base64Image: string, question: string) {
-    this.checkApiKey();
+    const ai = this.getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [
