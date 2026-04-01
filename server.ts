@@ -113,103 +113,15 @@ async function startServer() {
     return log;
   };
 
-  // API Routes
-  app.get("/api/devices", async (req, res) => {
-    if (!IS_MOCK_MODE) {
-      const realDeviceIds = await ADBService.listDevices();
-      // Cập nhật danh sách thiết bị thực tế nếu cần
-      console.log("Real devices connected:", realDeviceIds);
-    }
-    res.json(devices);
-  });
-
-  app.post("/api/devices/add", (req, res) => {
-    const { model, id } = req.body;
-    if (!id || !model) return res.status(400).json({ error: "Missing ID or Model" });
-    
-    if (devices.find(d => d.id === id)) {
-      return res.status(400).json({ error: "Device ID already exists" });
-    }
-
-    const newDevice = {
-      id,
-      model,
-      status: "idle",
-      battery: 100,
-      signal: "excellent",
-      currentNumber: null,
-      callCountHour: 0,
-      lastCallTime: 0,
-      consecutiveShortCalls: 0,
-      retryCount: 0,
-      isAlerted: false,
-      soundCardId: `SC_${Math.floor(Math.random() * 100)}`,
-      currentSim: 1,
-      simCallCount: 0
-    };
-    devices.push(newDevice);
-    addLog(id, `New device added: ${model}`, "success");
-    saveData();
-    res.json(newDevice);
-  });
-
-  app.delete("/api/devices/:id", (req, res) => {
-    const { id } = req.params;
-    const index = devices.findIndex(d => d.id === id);
-    if (index === -1) return res.status(404).json({ error: "Device not found" });
-    
-    const removedDevice = devices.splice(index, 1)[0];
-    addLog(id, `Device removed: ${removedDevice.model}`, "warning");
-    saveData();
-    res.json({ success: true, id });
-  });
-
-  app.get("/api/logs", (req, res) => {
-    res.json(logs);
-  });
-
-  app.get("/api/queue", (req, res) => {
-    res.json(queue);
-  });
-
-  app.post("/api/queue/add", (req, res) => {
-    const { phoneNumber, name } = req.body;
-    const newItem = {
-      id: Math.random().toString(36).substr(2, 9),
-      phoneNumber,
-      name: name || "Khách hàng mới",
-      status: "pending"
-    };
-    queue.push(newItem);
-    saveData();
-    res.json(newItem);
-  });
-
-  app.get("/api/settings", (req, res) => {
-    res.json(settings);
-  });
-
-  app.post("/api/settings", (req, res) => {
-    settings = { ...settings, ...req.body };
-    saveData();
-    res.json(settings);
-  });
-
-  app.get("/api/analytics", (req, res) => {
-    res.json(analytics);
-  });
-
-  app.post("/api/call", async (req, res) => {
-    const { deviceId, phoneNumber, audioFile } = req.body;
+  const initiateCall = async (deviceId: string, phoneNumber: string, audioFile: string) => {
     const device = devices.find((d) => d.id === deviceId);
-
-    if (!device) return res.status(404).json({ error: "Device not found" });
-    if (device.status !== "idle") return res.status(400).json({ error: "Device is busy" });
+    if (!device) return { success: false, error: "Device not found" };
+    if (device.status !== "idle") return { success: false, error: "Device is busy" };
 
     // 1. Race Condition Prevention: Check Central Queue Status
     const queueItem = queue.find(q => q.phoneNumber === phoneNumber);
     if (queueItem && (queueItem.status === "calling" || queueItem.status === "completed")) {
-      return res.status(400).json({ error: "Number is already being processed" });
+      return { success: false, error: "Number is already being processed" };
     }
 
     // Mark as calling immediately (Atomic Lock)
@@ -222,7 +134,7 @@ async function startServer() {
     if (device.callCountHour >= settings.hourlyLimit) {
       addLog(deviceId, `CẢNH BÁO: Đã đạt giới hạn ${settings.hourlyLimit} cuộc/giờ. Tạm dừng để tránh khóa Sim.`, "warning");
       if (queueItem) queueItem.status = "pending"; // Rollback
-      return res.status(429).json({ error: "Hourly limit reached" });
+      return { success: false, error: "Hourly limit reached" };
     }
 
     // Blacklist Prevention: Thời gian chờ (Dynamic Cooldown)
@@ -231,7 +143,8 @@ async function startServer() {
     const cooldownRemaining = Math.max(0, cooldownMs - (now - device.lastCallTime));
     if (cooldownRemaining > 0) {
       addLog(deviceId, `Cooldown: Chờ thêm ${Math.ceil(cooldownRemaining/1000)}s để giả lập hành vi người dùng.`, "info");
-      return res.status(429).json({ error: "Cooldown active", remaining: cooldownRemaining });
+      if (queueItem) queueItem.status = "pending"; // Rollback
+      return { success: false, error: "Cooldown active", remaining: cooldownRemaining };
     }
 
     // Blacklist Prevention: Tỷ lệ cuộc gọi ngắn (Dynamic Threshold)
@@ -239,7 +152,8 @@ async function startServer() {
       device.status = "alert";
       device.isAlerted = true;
       addLog(deviceId, `CẢNH BÁO: ${settings.spamThreshold} cuộc gọi liên tiếp bị cúp máy ngay. Có thể Sim đã bị đưa vào danh sách Spam. Tạm dừng máy.`, "error");
-      return res.status(403).json({ error: "Spam bot suspicion" });
+      if (queueItem) queueItem.status = "pending"; // Rollback
+      return { success: false, error: "Spam bot suspicion" };
     }
 
     const executeCall = async (retryAttempt = 0) => {
@@ -394,7 +308,133 @@ async function startServer() {
     };
 
     executeCall();
-    res.json({ status: "initiated", deviceId, phoneNumber });
+    return { success: true };
+  };
+
+  // Background Auto-Distribution Loop
+  setInterval(async () => {
+    if (!settings.autoMode) return;
+
+    const idleDevice = devices.find(d => d.status === "idle");
+    const nextInQueue = queue.find(q => q.status === "pending");
+
+    if (idleDevice && nextInQueue) {
+      console.log(`Auto-Distribution: Assigning ${nextInQueue.phoneNumber} to ${idleDevice.id}`);
+      initiateCall(idleDevice.id, nextInQueue.phoneNumber, "intro_v1.mp3");
+    }
+  }, 5000);
+
+  // API Routes
+  app.get("/api/devices", async (req, res) => {
+    if (!IS_MOCK_MODE) {
+      const realDeviceIds = await ADBService.listDevices();
+      // Cập nhật danh sách thiết bị thực tế nếu cần
+      console.log("Real devices connected:", realDeviceIds);
+    }
+    res.json(devices);
+  });
+
+  app.post("/api/devices/add", (req, res) => {
+    const { model, id } = req.body;
+    if (!id || !model) return res.status(400).json({ error: "Missing ID or Model" });
+    
+    if (devices.find(d => d.id === id)) {
+      return res.status(400).json({ error: "Device ID already exists" });
+    }
+
+    const newDevice = {
+      id,
+      model,
+      status: "idle",
+      battery: 100,
+      signal: "excellent",
+      currentNumber: null,
+      callCountHour: 0,
+      lastCallTime: 0,
+      consecutiveShortCalls: 0,
+      retryCount: 0,
+      isAlerted: false,
+      soundCardId: `SC_${Math.floor(Math.random() * 100)}`,
+      currentSim: 1,
+      simCallCount: 0
+    };
+    devices.push(newDevice);
+    addLog(id, `New device added: ${model}`, "success");
+    saveData();
+    res.json(newDevice);
+  });
+
+  app.delete("/api/devices/:id", (req, res) => {
+    const { id } = req.params;
+    const index = devices.findIndex(d => d.id === id);
+    if (index === -1) return res.status(404).json({ error: "Device not found" });
+    
+    const removedDevice = devices.splice(index, 1)[0];
+    addLog(id, `Device removed: ${removedDevice.model}`, "warning");
+    saveData();
+    res.json({ success: true, id });
+  });
+
+  app.get("/api/logs", (req, res) => {
+    res.json(logs);
+  });
+
+  app.get("/api/queue", (req, res) => {
+    res.json(queue);
+  });
+
+  app.post("/api/queue/add", (req, res) => {
+    const { phoneNumber, name } = req.body;
+    const newItem = {
+      id: Math.random().toString(36).substr(2, 9),
+      phoneNumber,
+      name: name || "Khách hàng mới",
+      status: "pending"
+    };
+    queue.push(newItem);
+    saveData();
+    res.json(newItem);
+  });
+
+  app.post("/api/queue/bulk-add", (req, res) => {
+    const { items } = req.body;
+    if (!Array.isArray(items)) return res.status(400).json({ error: "Items must be an array" });
+    
+    const newItems = items.map(item => ({
+      id: Math.random().toString(36).substr(2, 9),
+      phoneNumber: item.phoneNumber,
+      name: item.name || "Khách hàng mới",
+      status: "pending"
+    }));
+    
+    queue.push(...newItems);
+    saveData();
+    res.json({ success: true, count: newItems.length });
+  });
+
+  app.get("/api/settings", (req, res) => {
+    res.json(settings);
+  });
+
+  app.post("/api/settings", (req, res) => {
+    settings = { ...settings, ...req.body };
+    saveData();
+    res.json(settings);
+  });
+
+  app.get("/api/analytics", (req, res) => {
+    res.json(analytics);
+  });
+
+  app.post("/api/call", async (req, res) => {
+    const { deviceId, phoneNumber, audioFile } = req.body;
+    const result = await initiateCall(deviceId, phoneNumber, audioFile || "intro_v1.mp3");
+    
+    if (result.success) {
+      res.json({ status: "initiated", deviceId, phoneNumber });
+    } else {
+      res.status(result.error === "Device not found" ? 404 : 400).json(result);
+    }
   });
 
   app.post("/api/reboot", async (req, res) => {

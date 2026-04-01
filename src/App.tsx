@@ -37,7 +37,9 @@ import {
   Info,
   BarChart3,
   PieChart,
-  LayoutDashboard
+  LayoutDashboard,
+  Upload,
+  UserPlus
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { clsx, type ClassValue } from "clsx";
@@ -106,6 +108,10 @@ export default function App() {
   const [visionTask, setVisionTask] = useState("Tìm nút 'Đăng nhập' và click");
   const [visionResult, setVisionResult] = useState<any>(null);
   const [isAnalyzingScreen, setIsAnalyzingScreen] = useState(false);
+  const [showAddQueueModal, setShowAddQueueModal] = useState(false);
+  const [newQueueItem, setNewQueueItem] = useState({ phoneNumber: "", name: "" });
+  const [isAddingQueue, setIsAddingQueue] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const fetchDevices = async () => {
@@ -138,6 +144,62 @@ export default function App() {
     }
   };
 
+  const addQueueItem = async () => {
+    if (!newQueueItem.phoneNumber) return;
+    setIsAddingQueue(true);
+    try {
+      const res = await fetch("/api/queue/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newQueueItem),
+      });
+      if (res.ok) {
+        setNewQueueItem({ phoneNumber: "", name: "" });
+        setShowAddQueueModal(false);
+        fetchQueue();
+      }
+    } catch (e) {
+      console.error("Failed to add queue item", e);
+    } finally {
+      setIsAddingQueue(false);
+    }
+  };
+
+  const handleCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      const lines = text.split("\n");
+      const items = lines
+        .slice(1) // Skip header
+        .map(line => {
+          const [phoneNumber, name] = line.split(",").map(s => s.trim());
+          return { phoneNumber, name };
+        })
+        .filter(item => item.phoneNumber);
+
+      if (items.length > 0) {
+        try {
+          const res = await fetch("/api/queue/bulk-add", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ items }),
+          });
+          if (res.ok) {
+            fetchQueue();
+            alert(`Đã nhập thành công ${items.length} số điện thoại.`);
+          }
+        } catch (e) {
+          console.error("Failed to bulk add queue items", e);
+        }
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const fetchSettings = async () => {
     try {
       const res = await fetch("/api/settings");
@@ -160,6 +222,13 @@ export default function App() {
 
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Settings update helper (auto-saves to server)
+  const handleSettingChange = async (key: string, value: any) => {
+    const newSettings = { ...settings, [key]: value };
+    setSettings(newSettings);
+    await updateSettings(newSettings);
+  };
 
   const updateSettings = async (newSettings: any) => {
     setIsSavingSettings(true);
@@ -195,19 +264,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-distribution logic
-  useEffect(() => {
-    if (!settings.autoMode) return;
-
-    const idleDevice = devices.find(d => d.status === "idle");
-    const nextInQueue = queue.find(q => q.status === "pending");
-
-    if (idleDevice && nextInQueue) {
-      // Mark as calling immediately to avoid double calls before server update
-      handleCall(idleDevice.id, nextInQueue.phoneNumber);
-      // We should ideally mark the queue item as "calling" on the server too
-    }
-  }, [settings.autoMode, devices, queue]);
+  // Auto-distribution logic removed from frontend (now on server)
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -554,7 +611,7 @@ export default function App() {
                       className="flex-1 bg-transparent border-b border-[#141414] px-2 py-1 text-sm focus:outline-none placeholder:opacity-30"
                     />
                     <button 
-                      onClick={() => updateSettings({ ...settings, autoMode: !settings.autoMode })}
+                      onClick={() => handleSettingChange('autoMode', !settings.autoMode)}
                       className={cn(
                         "px-3 py-1 text-[10px] font-bold border border-[#141414] transition-all relative overflow-hidden flex items-center gap-2",
                         settings.autoMode ? "bg-green-600 text-white border-green-600" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
@@ -611,6 +668,7 @@ export default function App() {
                   <DeviceCard 
                     key={device.id} 
                     device={device} 
+                    settings={settings}
                     onCall={() => handleCall(device.id)}
                     onReboot={() => handleReboot(device.id)}
                     onRemove={() => setConfirmDelete({ id: device.id, model: device.model })}
@@ -737,10 +795,90 @@ export default function App() {
                   <p className="text-[10px] opacity-50 uppercase tracking-widest mt-1">Hệ thống sẽ tự động phân phối các số này cho 5 điện thoại đang rảnh</p>
                 </div>
                 <div className="flex gap-2">
-                  <button className="px-4 py-2 bg-white border border-[#141414] text-[#141414] text-[10px] font-bold uppercase tracking-widest">Thêm số mới</button>
-                  <button className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest">Nhập File CSV</button>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleCsvUpload} 
+                    accept=".csv" 
+                    className="hidden" 
+                  />
+                  <button 
+                    onClick={() => setShowAddQueueModal(true)}
+                    className="px-4 py-2 bg-white border border-[#141414] text-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-gray-50 transition-all"
+                  >
+                    <UserPlus size={14} /> Thêm số mới
+                  </button>
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-gray-800 transition-all"
+                  >
+                    <Upload size={14} /> Nhập File CSV
+                  </button>
                 </div>
               </div>
+
+              {/* Add Queue Item Modal */}
+              <AnimatePresence>
+                {showAddQueueModal && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+                  >
+                    <motion.div 
+                      initial={{ scale: 0.9, y: 20 }}
+                      animate={{ scale: 1, y: 0 }}
+                      exit={{ scale: 0.9, y: 20 }}
+                      className="bg-white p-8 border border-[#141414] w-full max-w-sm space-y-6 shadow-2xl"
+                    >
+                      <div className="flex justify-between items-center border-b border-[#141414] pb-4">
+                        <h3 className="text-lg font-serif italic">Thêm khách hàng mới</h3>
+                        <button onClick={() => setShowAddQueueModal(false)} className="text-gray-400 hover:text-[#141414]">
+                          <X size={20} />
+                        </button>
+                      </div>
+                      <div className="space-y-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Số điện thoại</label>
+                          <input 
+                            type="text" 
+                            value={newQueueItem.phoneNumber}
+                            onChange={(e) => setNewQueueItem({ ...newQueueItem, phoneNumber: e.target.value })}
+                            placeholder="090xxxxxxx"
+                            className="w-full p-3 border border-[#141414] focus:outline-none focus:ring-1 focus:ring-[#141414]"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Tên khách hàng</label>
+                          <input 
+                            type="text" 
+                            value={newQueueItem.name}
+                            onChange={(e) => setNewQueueItem({ ...newQueueItem, name: e.target.value })}
+                            placeholder="Nguyễn Văn A"
+                            className="w-full p-3 border border-[#141414] focus:outline-none focus:ring-1 focus:ring-[#141414]"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-3 pt-2">
+                        <button 
+                          onClick={() => setShowAddQueueModal(false)}
+                          className="flex-1 py-3 border border-[#141414] text-[10px] font-bold uppercase tracking-widest hover:bg-gray-50 transition-all"
+                        >
+                          Hủy bỏ
+                        </button>
+                        <button 
+                          onClick={addQueueItem}
+                          disabled={isAddingQueue || !newQueueItem.phoneNumber}
+                          className="flex-1 py-3 bg-[#141414] text-white text-[10px] font-bold uppercase tracking-widest hover:bg-gray-800 transition-all disabled:opacity-50"
+                        >
+                          {isAddingQueue ? <RefreshCw className="animate-spin mx-auto" size={14} /> : "Thêm vào hàng đợi"}
+                        </button>
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
               <div className="space-y-1">
                 {queue.map((item, i) => (
                   <div key={item.id} className="grid grid-cols-[40px_1.5fr_1fr_1fr_100px] items-center p-4 border-b border-[#141414] hover:bg-white/40 transition-colors group">
@@ -818,7 +956,7 @@ export default function App() {
                         <div className="w-full h-1 bg-white/10">
                           <div 
                             className="h-full bg-green-500" 
-                            style={{ width: `${Math.min(100, (d.callCountHour || 0) * 5)}%` }}
+                            style={{ width: `${Math.min(100, ((d.callCountHour || 0) / settings.hourlyLimit) * 100)}%` }}
                           />
                         </div>
                       </div>
@@ -882,7 +1020,7 @@ export default function App() {
                     </div>
                     <div className="space-y-2">
                       <button 
-                        onClick={() => setSettings({ ...settings, audioRouting: "vac" })}
+                        onClick={() => handleSettingChange('audioRouting', 'vac')}
                         className={cn(
                           "w-full flex items-center justify-between p-3 border border-[#141414] transition-all text-left",
                           settings.audioRouting === "vac" ? "bg-[#141414] text-white" : "bg-white/50 hover:bg-white"
@@ -895,7 +1033,7 @@ export default function App() {
                         {settings.audioRouting === "vac" && <CheckCircle2 size={16} />}
                       </button>
                       <button 
-                        onClick={() => setSettings({ ...settings, audioRouting: "hardware" })}
+                        onClick={() => handleSettingChange('audioRouting', 'hardware')}
                         className={cn(
                           "w-full flex items-center justify-between p-3 border border-[#141414] transition-all text-left",
                           settings.audioRouting === "hardware" ? "bg-[#141414] text-white" : "bg-white/50 hover:bg-white"
@@ -908,7 +1046,7 @@ export default function App() {
                         {settings.audioRouting === "hardware" && <CheckCircle2 size={16} />}
                       </button>
                       <button 
-                        onClick={() => setSettings({ ...settings, audioRouting: "root_direct" })}
+                        onClick={() => handleSettingChange('audioRouting', 'root_direct')}
                         className={cn(
                           "w-full flex items-center justify-between p-3 border border-[#141414] transition-all text-left",
                           settings.audioRouting === "root_direct" ? "bg-[#141414] text-white" : "bg-white/50 hover:bg-white"
@@ -935,7 +1073,7 @@ export default function App() {
                           <span className="text-[9px] opacity-60">Chờ khách hàng nói "Alo" mới bắt đầu phát thoại.</span>
                         </div>
                         <button 
-                          onClick={() => setSettings({ ...settings, vadEnabled: !settings.vadEnabled })}
+                          onClick={() => handleSettingChange('vadEnabled', !settings.vadEnabled)}
                           className={cn("w-10 h-5 rounded-full p-1 transition-colors", settings.vadEnabled ? "bg-green-500" : "bg-gray-300")}
                         >
                           <div className={cn("w-3 h-3 bg-white rounded-full transition-all", settings.vadEnabled ? "ml-5" : "ml-0")} />
@@ -947,7 +1085,7 @@ export default function App() {
                           <span className="text-[9px] opacity-60">Tự động chèn tên khách hàng vào câu thoại xác nhận.</span>
                         </div>
                         <button 
-                          onClick={() => setSettings({ ...settings, useTTS: !settings.useTTS })}
+                          onClick={() => handleSettingChange('useTTS', !settings.useTTS)}
                           className={cn("w-10 h-5 rounded-full p-1 transition-colors", settings.useTTS ? "bg-green-500" : "bg-gray-300")}
                         >
                           <div className={cn("w-3 h-3 bg-white rounded-full transition-all", settings.useTTS ? "ml-5" : "ml-0")} />
@@ -972,7 +1110,7 @@ export default function App() {
                           min="5" 
                           max="100" 
                           value={settings.hourlyLimit} 
-                          onChange={(e) => setSettings({ ...settings, hourlyLimit: parseInt(e.target.value) })}
+                          onChange={(e) => handleSettingChange('hourlyLimit', parseInt(e.target.value))}
                           className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#141414]" 
                         />
                         <p className="text-[9px] opacity-60 italic">Giới hạn số cuộc gọi tối đa mỗi giờ trên mỗi SIM để tránh bị nhà mạng khóa SIM.</p>
@@ -988,7 +1126,7 @@ export default function App() {
                           min="3" 
                           max="20" 
                           value={settings.spamThreshold} 
-                          onChange={(e) => setSettings({ ...settings, spamThreshold: parseInt(e.target.value) })}
+                          onChange={(e) => handleSettingChange('spamThreshold', parseInt(e.target.value))}
                           className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#141414]" 
                         />
                         <p className="text-[9px] opacity-60 italic">Số cuộc gọi ngắn (dưới 5s) liên tiếp tối đa. Vượt ngưỡng này máy sẽ tạm dừng để bảo vệ SIM.</p>
@@ -1009,7 +1147,7 @@ export default function App() {
                         <input 
                           type="number" 
                           value={settings.callDelay} 
-                          onChange={(e) => setSettings({ ...settings, callDelay: parseInt(e.target.value) })}
+                          onChange={(e) => handleSettingChange('callDelay', parseInt(e.target.value))}
                           className="w-full bg-transparent border-b border-[#141414] focus:outline-none text-sm py-1" 
                         />
                         <p className="text-[9px] opacity-60 italic">Thời gian nghỉ giữa 2 cuộc gọi liên tiếp trên cùng một thiết bị (giãn cách tự nhiên).</p>
@@ -1019,7 +1157,7 @@ export default function App() {
                         <input 
                           type="number" 
                           value={settings.maxRetries} 
-                          onChange={(e) => setSettings({ ...settings, maxRetries: parseInt(e.target.value) })}
+                          onChange={(e) => handleSettingChange('maxRetries', parseInt(e.target.value))}
                           className="w-full bg-transparent border-b border-[#141414] focus:outline-none text-sm py-1" 
                         />
                         <p className="text-[9px] opacity-60 italic">Số lần thử lại tối đa khi cuộc gọi thất bại trước khi chuyển sang bước Reset/Alert.</p>
@@ -1034,7 +1172,7 @@ export default function App() {
                           min="1" 
                           max="50" 
                           value={settings.simRotationLimit} 
-                          onChange={(e) => setSettings({ ...settings, simRotationLimit: parseInt(e.target.value) })}
+                          onChange={(e) => handleSettingChange('simRotationLimit', parseInt(e.target.value))}
                           className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#141414]" 
                         />
                         <p className="text-[9px] opacity-60 italic">Tự động đổi SIM 1/2 sau mỗi X cuộc gọi để tránh bị nhà mạng soi tần suất.</p>
@@ -1049,7 +1187,7 @@ export default function App() {
                         <p className="text-[10px] opacity-60">Tự động phân phối cuộc gọi từ hàng đợi cho các máy đang rảnh.</p>
                       </div>
                       <button 
-                        onClick={() => setSettings({ ...settings, autoMode: !settings.autoMode })}
+                        onClick={() => handleSettingChange('autoMode', !settings.autoMode)}
                         className={cn(
                           "w-12 h-6 rounded-full p-1 transition-colors relative",
                           settings.autoMode ? "bg-green-500" : "bg-gray-600"
@@ -1098,7 +1236,7 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
   );
 }
 
-function DeviceCard({ device, onCall, onReboot, onRemove }: { key?: string | number; device: Device; onCall: () => void | Promise<void>; onReboot: () => void | Promise<void>; onRemove: () => void | Promise<void> }) {
+function DeviceCard({ device, settings, onCall, onReboot, onRemove }: { key?: string | number; device: Device; settings: any; onCall: () => void | Promise<void>; onReboot: () => void | Promise<void>; onRemove: () => void | Promise<void> }) {
   const isBusy = device.status !== "idle";
 
   return (
@@ -1183,14 +1321,14 @@ function DeviceCard({ device, onCall, onReboot, onRemove }: { key?: string | num
       <div className="grid grid-cols-2 gap-2">
         <div className="p-2 bg-white/40 border border-[#141414]/5 rounded-sm">
           <p className="text-[8px] uppercase font-bold opacity-40">Calls/Hour</p>
-          <p className={cn("text-xs font-bold", (device.callCountHour || 0) >= 15 ? "text-orange-600" : "text-black")}>
-            {device.callCountHour || 0}/20
+          <p className={cn("text-xs font-bold", (device.callCountHour || 0) >= (settings.hourlyLimit * 0.8) ? "text-orange-600" : "text-black")}>
+            {device.callCountHour || 0}/{settings.hourlyLimit}
           </p>
         </div>
         <div className="p-2 bg-white/40 border border-[#141414]/5 rounded-sm">
           <p className="text-[8px] uppercase font-bold opacity-40">Spam Score</p>
-          <p className={cn("text-xs font-bold", (device.consecutiveShortCalls || 0) >= 5 ? "text-red-600" : "text-black")}>
-            {device.consecutiveShortCalls || 0}/10
+          <p className={cn("text-xs font-bold", (device.consecutiveShortCalls || 0) >= (settings.spamThreshold * 0.7) ? "text-red-600" : "text-black")}>
+            {device.consecutiveShortCalls || 0}/{settings.spamThreshold}
           </p>
         </div>
       </div>
